@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>voice-to-text test client</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: .25rem; }
+  p.sub { margin-top: 0; opacity: .65; }
+  .row { display: flex; gap: .625rem; align-items: center; margin: 1.5rem 0; }
+  button {
+    font: inherit; padding: .5rem 1.125rem; border-radius: .5rem;
+    border: 1px solid currentColor; background: transparent; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #status { font-variant-numeric: tabular-nums; opacity: .7; }
+  #status.live { color: #16a34a; opacity: 1; }
+  #status.error { color: #dc2626; opacity: 1; }
+  #out {
+    min-height: 12rem; padding: 1rem; border-radius: .5rem;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #out .interim { opacity: .5; font-style: italic; }
+  #log {
+    margin-top: 1.25rem; font: 12px/1.5 ui-monospace, monospace;
+    max-height: 11rem; overflow-y: auto; opacity: .6; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <h1>voice-to-text</h1>
+  <p class="sub">Streams mic audio as PCM16 / 16&nbsp;kHz mono over WebSocket. English (en-US).</p>
+
+  <div class="row">
+    <button id="start">Start recording</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="status">idle</span>
+  </div>
+
+  <div id="out"></div>
+  <div id="log"></div>
+
+<script type="module">
+const startBtn = document.getElementById('start');
+const stopBtn  = document.getElementById('stop');
+const statusEl = document.getElementById('status');
+const outEl    = document.getElementById('out');
+const logEl    = document.getElementById('log');
+
+let ws = null, ctx = null, stream = null, node = null, source = null;
+let finalText = '';
+let bytesSent = 0;
+
+function setStatus(text, kind = '') {
+  statusEl.textContent = text;
+  statusEl.className = kind;
+}
+
+function log(line) {
+  logEl.textContent += `${new Date().toLocaleTimeString()}  ${line}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function render(interim = '') {
+  outEl.textContent = finalText;
+  if (interim) {
+    const span = document.createElement('span');
+    span.className = 'interim';
+    span.textContent = interim;
+    outEl.appendChild(span);
+  }
+}
+
+async function start() {
+  startBtn.disabled = true;
+  finalText = '';
+  bytesSent = 0;
+  render();
+  setStatus('requesting mic…');
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (error) {
+    setStatus(`mic denied: ${error.message}`, 'error');
+    startBtn.disabled = false;
+    return;
+  }
+
+  setStatus('connecting…');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/transcribe`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = async () => {
+    log('ws open');
+    ws.send(JSON.stringify({ type: 'start' }));
+
+    // Ask for 16kHz directly; we resample in the worklet if the browser refuses.
+    ctx = new AudioContext({ sampleRate: 16000 });
+    log(`AudioContext sampleRate=${ctx.sampleRate}`);
+    await ctx.audioWorklet.addModule('/pcm-worklet.js');
+
+    source = ctx.createMediaStreamSource(stream);
+    node = new AudioWorkletNode(ctx, 'pcm-worklet');
+    node.port.onmessage = (event) => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(event.data.buffer);
+        bytesSent += event.data.buffer.byteLength;
+      }
+    };
+    // Worklet has no output; connecting to destination keeps the graph pulling.
+    source.connect(node).connect(ctx.destination);
+
+    stopBtn.disabled = false;
+    setStatus('listening', 'live');
+  };
+
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    switch (message.type) {
+      case 'ready':
+        log('upstream ready');
+        break;
+      case 'transcript':
+        if (message.isFinal) {
+          finalText = `${finalText}${message.text} `.replace(/\s+/g, ' ');
+          render();
+        } else {
+          render(message.text);
+        }
+        if (message.words?.length) log(`words: ${message.words.length}`);
+        break;
+      case 'reconnecting':
+        setStatus(`reconnecting (${message.reason})`, '');
+        log(`reconnecting: ${message.reason}`);
+        break;
+      case 'error':
+        setStatus(`error: ${message.code}`, 'error');
+        log(`ERROR ${message.code}: ${message.message}`);
+        break;
+      case 'closed':
+        log(`closed: ${message.reason}`);
+        break;
+      default:
+        log(`unknown message: ${event.data}`);
+    }
+  };
+
+  ws.onerror = () => { setStatus('websocket error', 'error'); log('ws error'); };
+  ws.onclose  = () => { log(`ws closed (${(bytesSent / 1024).toFixed(0)} KiB sent)`); teardown(); };
+}
+
+function teardown() {
+  node?.port && (node.port.onmessage = null);
+  source?.disconnect();
+  node?.disconnect();
+  ctx?.close();
+  stream?.getTracks().forEach((track) => track.stop());
+  ctx = node = source = stream = null;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  if (statusEl.className !== 'error') setStatus('idle');
+}
+
+function stop() {
+  stopBtn.disabled = true;
+  setStatus('stopping…');
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
+  // Cut the mic immediately — billing follows audio sent, not intent.
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+startBtn.addEventListener('click', start);
+stopBtn.addEventListener('click', stop);
+</script>
+</body>
+</html>
