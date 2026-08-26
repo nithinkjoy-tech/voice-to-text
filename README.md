@@ -154,3 +154,69 @@ client is the acceptance check. Before exposing this publicly you'd want auth on
 the WS upgrade, a per-connection audio budget, and — for browser-side use of the
 key — [ephemeral tokens](https://ai.google.dev/gemini-api/docs/live-guide)
 rather than the raw API key.
+
+## Deploying to Cloudflare
+
+The Node server in `src/` **cannot** run on Cloudflare Workers: Workers cannot
+open outbound WebSockets with the `WebSocket` constructor (only `fetch()` with an
+`Upgrade` header), so neither `@google/genai` build works there, and a per-client
+upstream session would need a Durable Object.
+
+So the deployed topology is different from local development:
+
+```
+local dev:   browser ──WS──> Node server ──WS──> Gemini Live
+Cloudflare:  browser ──POST /api/token──> Worker ──REST──> Gemini
+             browser ────────────WS────────────> Gemini Live   (direct)
+```
+
+The Worker only mints short-lived, single-use tokens. Audio and transcripts never
+pass through it, which is why no Durable Object is needed.
+
+| Path | |
+|---|---|
+[worker/src/index.ts](worker/src/index.ts) | `POST /api/token`, `GET /api/health`, static assets |
+[web/](web/) | browser client that connects straight to Gemini Live |
+[wrangler.jsonc](wrangler.jsonc) | Worker config and `vars` |
+
+### Deploy
+
+```bash
+npx wrangler login
+npx wrangler secret put GEMINI_API_KEY     # paste your AI Studio key
+npm run cf:deploy
+```
+
+Local Worker development uses `.dev.vars` (gitignored) instead of the secret:
+
+```bash
+cp .dev.vars.example .dev.vars   # add your key
+npm run cf:dev                   # http://localhost:8787
+```
+
+### How the token is constrained
+
+The model and every transcription setting are pinned server-side in
+`buildSetup()` and locked with a `fieldMask`, so the token cannot be replayed
+with a different model or a raised output budget. Verified: a client connecting
+with `maxOutputTokens: 8192` and an injected `systemInstruction` produced zero
+generated turns — the lock held.
+
+Tokens are `uses: 1`, must be used within 120s (`newSessionExpireTime`), and
+expire after 30 minutes (`expireTime`). Your real API key never leaves the
+Worker. Because tokens are single-use, the browser fetches a fresh one whenever a
+session hits its duration cap.
+
+### Before exposing this publicly
+
+- **`/api/token` is unauthenticated.** Anyone who can reach it gets a billable
+  credential. `ALLOWED_ORIGINS` is a CORS control, not authentication — a request
+  with no `Origin` header (curl, any server-side caller) passes it. Put real auth
+  in front of this endpoint.
+- **Add rate limiting.** Cloudflare WAF rate-limiting rules or a Workers
+  rate-limit binding, keyed per user or IP.
+- **If you set `ALLOWED_ORIGINS` to specific hosts, include your own Worker
+  origin** (e.g. `https://voice-to-text.<subdomain>.workers.dev`), since browsers
+  send `Origin` on same-origin POSTs.
+- Cost scales with audio sent, so the client stops the mic the moment you press
+  Stop.

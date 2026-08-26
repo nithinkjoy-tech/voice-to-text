@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "voice-to-text",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "web/dist",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "GEMINI_LIVE_MODEL": "gemini-3.1-flash-live-preview",
+    "TRANSCRIPTION_MODE": "VERBATIM",
+    "ALLOWED_ORIGINS": "*"
+  }
+}

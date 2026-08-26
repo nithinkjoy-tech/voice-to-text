@@ -4,12 +4,15 @@
   "description": "Real-time English voice-to-text over WebSocket via Gemini Live API",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "web:build": "esbuild web/app.js --bundle --format=esm --target=es2022 --outfile=web/dist/app.js --minify && cp web/index.html web/pcm-worklet.js web/dist/",
+    "cf:dev": "npm run web:build && wrangler dev",
+    "cf:deploy": "npm run web:build && wrangler deploy",
+    "cf:typecheck": "tsc -p worker/tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -22,10 +25,13 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260826.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.3.0",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.126.0"
   }
 }

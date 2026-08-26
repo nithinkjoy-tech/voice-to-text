@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>voice-to-text</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: .25rem; }
+  p.sub { margin-top: 0; opacity: .65; }
+  .row { display: flex; gap: .625rem; align-items: center; margin: 1.5rem 0; }
+  button {
+    font: inherit; padding: .5rem 1.125rem; border-radius: .5rem;
+    border: 1px solid currentColor; background: transparent; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #status { font-variant-numeric: tabular-nums; opacity: .7; }
+  #status.live { color: #16a34a; opacity: 1; }
+  #status.error { color: #dc2626; opacity: 1; }
+  #out {
+    min-height: 12rem; padding: 1rem; border-radius: .5rem;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #out .interim { opacity: .5; font-style: italic; }
+  #log {
+    margin-top: 1.25rem; font: 12px/1.5 ui-monospace, monospace;
+    max-height: 11rem; overflow-y: auto; opacity: .6; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <h1>voice-to-text</h1>
+  <p class="sub">Mic audio streams straight to Gemini Live using a short-lived token. English (en-US).</p>
+
+  <div class="row">
+    <button id="start">Start recording</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="status">idle</span>
+  </div>
+
+  <div id="out"></div>
+  <div id="log"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
